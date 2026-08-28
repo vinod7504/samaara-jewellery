@@ -1,0 +1,54 @@
+.field {
+  margin-top: 0.35rem;
+  width: 100%;
+  border-radius: 0.375rem;
+  border: 1px solid #dcc59d;
+  background: rgba(255, 255, 255, 0.88);
+  padding: 0.55rem 0.7rem;
+  color: #2d2418;
+  outline: none;
+}
+
+.field:focus {
+  border-color: #b9852b;
+  box-shadow: 0 0 0 3px rgba(185, 133, 43, 0.16);
+}
+
+.btn-primary {
+  border-radius: 0.375rem;
+  background: #9f6e1f;
+  padding: 0.6rem 0.9rem;
+  font-weight: 600;
+  color: white;
+}
+
+.btn-primary:hover {
+  background: #825816;
+}
+
+.btn-secondary {
+  border-radius: 0.375rem;
+  border: 1px solid #cda85f;
+  background: white;
+  padding: 0.55rem 0.85rem;
+  font-weight: 600;
+  color: #6c4610;
+}
+
+.btn-secondary:hover {
+  background: #fff3d8;
+}
+
+.dashboard-th {
+  border: 1px solid #d6bd8e;
+  padding: 0.65rem 0.75rem;
+  text-align: left;
+  font-weight: 700;
+}
+
+.dashboard-td {
+  border: 1px solid #eadabe;
+  background: #fffaf0;
+  padding: 0.65rem 0.75rem;
+  vertical-align: top;
+}
