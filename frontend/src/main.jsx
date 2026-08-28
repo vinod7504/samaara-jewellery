@@ -20,7 +20,12 @@ const uid = () => (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Ma
 const num = value => Number.parseFloat(value) || 0;
 const money = (value, decimals = 2) => `Rs. ${Number(value || 0).toLocaleString("en-IN", { maximumFractionDigits: decimals, minimumFractionDigits: decimals })}`;
 const plainMoney = (value, decimals = 1) => Number(value || 0).toLocaleString("en-IN", { maximumFractionDigits: decimals, minimumFractionDigits: decimals });
-const apiBaseUrl = window.location.port === "5173" ? "http://localhost:3001" : "";
+const apiBaseUrl = (
+  import.meta.env.VITE_API_BASE_URL ||
+  (window.location.port === "5173"
+    ? "http://localhost:3001"
+    : "https://samaara-jewellery.onrender.com")
+).replace(/\/$/, "");
 const apiUrl = path => `${apiBaseUrl}${path}`;
 
 function financialYearFor(dateValue) {

@@ -9,11 +9,9 @@ const port = process.env.PORT || 3000;
 const mongoUri = process.env.MONGODB_URI;
 const dbName = process.env.MONGODB_DB || "samaara";
 
-if (!mongoUri) {
-  throw new Error("Missing MONGODB_URI in .env");
-}
-
-const client = new MongoClient(mongoUri, { serverSelectionTimeoutMS: 8000 });
+const client = mongoUri
+  ? new MongoClient(mongoUri, { serverSelectionTimeoutMS: 8000 })
+  : null;
 let db;
 
 function cleanPan(value) {
@@ -89,6 +87,7 @@ async function reserveInvoiceNumber(database, dateValue) {
 
 async function connectDb() {
   if (db) return db;
+  if (!client) throw new Error("Missing MONGODB_URI environment variable");
   await client.connect();
   db = client.db(dbName);
   await db.collection("customers").createIndex({ panCard: 1 }, { unique: true });
@@ -102,6 +101,11 @@ async function connectDb() {
 app.use(express.json({ limit: "2mb" }));
 app.use((req, res, next) => {
   const allowedOrigins = new Set(["http://localhost:5173", "http://127.0.0.1:5173"]);
+  String(process.env.FRONTEND_URL || "")
+    .split(",")
+    .map(origin => origin.trim().replace(/\/$/, ""))
+    .filter(Boolean)
+    .forEach(origin => allowedOrigins.add(origin));
   const origin = req.headers.origin;
   if (allowedOrigins.has(origin)) {
     res.setHeader("Access-Control-Allow-Origin", origin);
@@ -318,6 +322,6 @@ app.get("*", (req, res) => {
   res.sendFile(path.join(frontendDist, "index.html"));
 });
 
-app.listen(port, () => {
-  console.log(`SAMAARA invoice app running at http://localhost:${port}`);
+app.listen(port, "0.0.0.0", () => {
+  console.log(`SAMAARA invoice app listening on 0.0.0.0:${port}`);
 });
