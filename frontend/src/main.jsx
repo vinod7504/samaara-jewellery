@@ -355,6 +355,10 @@ function App() {
   const [dashboardFilters, setDashboardFilters] = useState({ name: "", month: "", year: "" });
   const [dashboardRows, setDashboardRows] = useState([]);
   const [dashboardStatus, setDashboardStatus] = useState("");
+  const [editingInvoiceNo, setEditingInvoiceNo] = useState("");
+  const [viewedInvoice, setViewedInvoice] = useState(null);
+  const [pendingDeleteInvoiceNo, setPendingDeleteInvoiceNo] = useState("");
+  const [deleteInProgress, setDeleteInProgress] = useState(false);
   const totals = useMemo(() => calculateTotals(items, deductions), [items, deductions]);
 
   const setFormValue = (key, value) => setForm(current => ({ ...current, [key]: value }));
@@ -367,6 +371,7 @@ function App() {
   };
 
   useEffect(() => {
+    if (editingInvoiceNo) return;
     let cancelled = false;
     async function loadNextInvoiceNumber() {
       setForm(current => ({ ...current, invoiceNo: fallbackInvoiceNumber(form.invoiceDate) }));
@@ -384,7 +389,7 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [form.invoiceDate]);
+  }, [form.invoiceDate, editingInvoiceNo]);
 
   useEffect(() => {
     if (dashboardOpen) loadDashboardHistory();
@@ -476,6 +481,69 @@ function App() {
     window.history.pushState({}, "", "/");
   };
 
+  const viewInvoice = async invoiceNo => {
+    setDashboardStatus("Loading invoice details...");
+    try {
+      const response = await fetch(apiUrl(`/api/invoices/${encodeURIComponent(invoiceNo)}`));
+      const invoice = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(invoice.error || "Could not load invoice.");
+      setViewedInvoice(invoice);
+      setDashboardStatus("");
+    } catch (error) {
+      setDashboardStatus(error.message);
+    }
+  };
+
+  const editInvoice = async invoiceNo => {
+    setDashboardStatus("Loading invoice for editing...");
+    try {
+      const response = await fetch(apiUrl(`/api/invoices/${encodeURIComponent(invoiceNo)}`));
+      const invoice = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(invoice.error || "Could not load invoice.");
+
+      setEditingInvoiceNo(invoice.invoiceNo);
+      setForm({
+        invoiceNo: invoice.invoiceNo || "",
+        invoiceDate: invoice.invoiceDate || today,
+        customerName: invoice.customerName || "",
+        customerTax: invoice.panCard || "",
+        customerAddress: invoice.customerAddress || ""
+      });
+      setRates(current => ({ ...current, ...(invoice.rates || {}) }));
+      setDeductions(current => ({ ...current, ...(invoice.deductions || {}) }));
+      setItems(invoice.items?.length
+        ? invoice.items.map(item => ({ ...item, id: item.id || uid() }))
+        : [{ ...blankItem(rates), id: uid() }]);
+      setSaveStatus(invoice.items?.length ? `Editing ${invoice.invoiceNo}` : `Editing legacy invoice ${invoice.invoiceNo}. Add its item details before updating.`);
+      closeDashboard();
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    } catch (error) {
+      setDashboardStatus(error.message);
+    }
+  };
+
+  const deleteInvoice = async invoiceNo => {
+    setDeleteInProgress(true);
+    setDashboardStatus(`Deleting ${invoiceNo}...`);
+    try {
+      const response = await fetch(apiUrl("/api/invoices/delete"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ invoiceNo })
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || "Could not delete invoice.");
+      if (viewedInvoice?.invoiceNo === invoiceNo) setViewedInvoice(null);
+      setDashboardRows(current => current.filter(invoice => invoice.invoiceNo !== invoiceNo));
+      setPendingDeleteInvoiceNo("");
+      setDashboardStatus(`Invoice ${invoiceNo} deleted.`);
+    } catch (error) {
+      setDashboardStatus(error.message);
+    } finally {
+      setDeleteInProgress(false);
+    }
+  };
+
   const downloadInvoice = async () => {
     setSaveStatus("Saving invoice...");
     const invoice = payload();
@@ -483,8 +551,8 @@ function App() {
     try {
       const pdfForm = { ...form, invoiceNo: form.invoiceNo || fallbackInvoiceNumber(form.invoiceDate) };
       const pdfBase64 = pdfDataUri({ form: pdfForm, deductions, totals });
-      const response = await fetch(apiUrl("/api/invoices"), {
-        method: "POST",
+      const response = await fetch(apiUrl(editingInvoiceNo ? `/api/invoices/${encodeURIComponent(editingInvoiceNo)}` : "/api/invoices"), {
+        method: editingInvoiceNo ? "PUT" : "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ...invoice, invoiceNo: pdfForm.invoiceNo, pdfBase64 })
       });
@@ -495,7 +563,8 @@ function App() {
       setForm(current => ({ ...current, invoiceNo: savedInvoiceNo }));
       await loadCustomerByPan(invoice.customer.panCard);
       generatePdf({ form: savedPdfForm, deductions, totals });
-      setSaveStatus(`Invoice saved. File: ${result.invoice?.pdfPath || "backend/invoices"}`);
+      setEditingInvoiceNo(savedInvoiceNo);
+      setSaveStatus(`Invoice ${editingInvoiceNo ? "updated" : "saved"}. File: ${result.invoice?.pdfPath || "backend/invoices"}`);
       if (dashboardOpen) loadDashboardHistory();
     } catch (error) {
       setSaveStatus(error.message);
@@ -571,9 +640,60 @@ function App() {
               <div className="flex justify-between gap-3"><dt className="text-muted">Address</dt><dd className="max-w-44 text-right">{invoice.customerAddress || "-"}</dd></div>
               <div className="flex justify-between gap-3"><dt className="text-muted">File</dt><dd className="max-w-44 text-right">{invoice.pdfPath || "-"}</dd></div>
             </dl>
+            <div className="mt-3 flex flex-wrap justify-end gap-1.5">
+              <button className="rounded border border-[#cdb68e] bg-white px-2 py-1 text-xs font-semibold text-ink hover:bg-[#fff8eb]" type="button" onClick={() => viewInvoice(invoice.invoiceNo)}>View</button>
+              <button className="rounded border border-[#b48a45] bg-[#b48a45] px-2 py-1 text-xs font-semibold text-white hover:bg-[#9d7639]" type="button" onClick={() => editInvoice(invoice.invoiceNo)}>Edit</button>
+              <button className="rounded border border-red-300 bg-white px-2 py-1 text-xs font-semibold text-red-700 hover:bg-red-50" type="button" onClick={() => setPendingDeleteInvoiceNo(invoice.invoiceNo)}>Delete</button>
+            </div>
           </article>
         ))}
       </div>
+      {viewedInvoice && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true" aria-label="Invoice details">
+          <div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-md border border-[#e8d7b8] bg-[#fffdf8] p-5 shadow-xl">
+            <div className="mb-5 flex items-start justify-between gap-4">
+              <div>
+                <h2 className="text-xl font-semibold">{viewedInvoice.invoiceNo}</h2>
+                <p className="text-sm text-muted">{viewedInvoice.invoiceDate} · {viewedInvoice.customerName}</p>
+              </div>
+              <button className="btn-secondary" type="button" onClick={() => setViewedInvoice(null)}>Close</button>
+            </div>
+            <dl className="mb-5 grid gap-2 text-sm sm:grid-cols-2">
+              <div><dt className="text-muted">PAN / Tax ID</dt><dd className="font-medium">{viewedInvoice.panCard || "-"}</dd></div>
+              <div><dt className="text-muted">Address</dt><dd className="font-medium">{viewedInvoice.customerAddress || "-"}</dd></div>
+            </dl>
+            <div className="space-y-3">
+              {viewedInvoice.items?.length ? viewedInvoice.items.map((item, index) => (
+                <div key={item.id || index} className="rounded border border-[#eadabe] bg-[#fffaf0] p-3 text-sm">
+                  <div className="flex justify-between gap-4"><span className="font-semibold">{index + 1}. {item.name || "Item"}</span><span className="font-semibold">{money(item.total || 0)}</span></div>
+                  <div className="mt-1 text-muted">Gross: {item.grossWeight || 0} g · Net: {item.netWeight || 0} g · Making: {money(item.makingCharge || 0)}</div>
+                </div>
+              )) : <div className="rounded border border-[#eadabe] bg-[#fffaf0] p-4 text-sm text-muted">This older invoice has no saved item details. Use Edit to add and save them.</div>}
+            </div>
+            <dl className="ml-auto mt-5 max-w-sm space-y-2 border-t border-[#e8d7b8] pt-4 text-sm">
+              <div className="flex justify-between"><dt>Subtotal</dt><dd>{money(viewedInvoice.totals?.subtotal || 0)}</dd></div>
+              <div className="flex justify-between"><dt>CGST</dt><dd>{money(viewedInvoice.totals?.cgst || 0)}</dd></div>
+              <div className="flex justify-between"><dt>SGST</dt><dd>{money(viewedInvoice.totals?.sgst || 0)}</dd></div>
+              <div className="flex justify-between text-base font-semibold"><dt>Grand Total</dt><dd>{money(viewedInvoice.totals?.grandTotal ?? viewedInvoice.grandTotal ?? 0, 0)}</dd></div>
+            </dl>
+            <button className="btn-primary mt-5 w-full" type="button" onClick={() => { const invoiceNo = viewedInvoice.invoiceNo; setViewedInvoice(null); editInvoice(invoiceNo); }}>Edit This Invoice</button>
+          </div>
+        </div>
+      )}
+      {pendingDeleteInvoiceNo && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true" aria-labelledby="delete-invoice-title">
+          <div className="w-full max-w-md rounded-md border border-[#e8d7b8] bg-[#fffdf8] p-5 shadow-xl">
+            <h2 id="delete-invoice-title" className="text-lg font-semibold text-ink">Delete invoice?</h2>
+            <p className="mt-3 text-sm text-muted">
+              Invoice <span className="font-semibold text-ink">{pendingDeleteInvoiceNo}</span> will be permanently deleted. This action cannot be undone.
+            </p>
+            <div className="mt-6 flex justify-end gap-2">
+              <button className="btn-secondary" type="button" disabled={deleteInProgress} onClick={() => setPendingDeleteInvoiceNo("")}>Cancel</button>
+              <button className="rounded-md border border-red-700 bg-red-700 px-4 py-2 text-sm font-semibold text-white hover:bg-red-800 disabled:cursor-not-allowed disabled:opacity-60" type="button" disabled={deleteInProgress} onClick={() => deleteInvoice(pendingDeleteInvoiceNo)}>{deleteInProgress ? "Deleting..." : "Delete Invoice"}</button>
+            </div>
+          </div>
+        </div>
+      )}
     </section>
   );
 
@@ -656,7 +776,8 @@ function App() {
             <dl className="space-y-2 text-sm">
               <div className="flex justify-between"><dt>Items Total</dt><dd>{money(totals.subtotal)}</dd></div><div className="flex justify-between"><dt>CGST 1.5%</dt><dd>{money(totals.cgst)}</dd></div><div className="flex justify-between"><dt>SGST 1.5%</dt><dd>{money(totals.sgst)}</dd></div><div className="flex justify-between"><dt>Old Gold Deduction</dt><dd>- {money(totals.oldGoldDeduction)}</dd></div><div className="flex justify-between"><dt>Round Off</dt><dd>{money(totals.roundOff)}</dd></div><div className="mt-3 border-t border-[#e8d7b8] pt-3 text-base font-semibold"><div className="flex justify-between"><dt>Grand Total</dt><dd>{money(totals.grandTotal, 0)}</dd></div></div>
             </dl>
-            <button className="btn-primary mt-5 w-full" type="button" onClick={downloadInvoice}>Download Invoice PDF</button>
+            <button className="btn-primary mt-5 w-full" type="button" onClick={downloadInvoice}>{editingInvoiceNo ? "Update & Download Invoice PDF" : "Save & Download Invoice PDF"}</button>
+            {editingInvoiceNo && <button className="btn-secondary mt-2 w-full" type="button" onClick={() => { setEditingInvoiceNo(""); setSaveStatus(""); }}>Cancel Editing</button>}
             <p className="mt-3 min-h-5 text-sm text-muted">{saveStatus}</p>
           </section>
 
