@@ -100,7 +100,11 @@ async function connectDb() {
 
 app.use(express.json({ limit: "2mb" }));
 app.use((req, res, next) => {
-  const allowedOrigins = new Set(["http://localhost:5173", "http://127.0.0.1:5173"]);
+  const allowedOrigins = new Set([
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "https://samaarajewels.netlify.app"
+  ]);
   String(process.env.FRONTEND_URL || "")
     .split(",")
     .map(origin => origin.trim().replace(/\/$/, ""))
