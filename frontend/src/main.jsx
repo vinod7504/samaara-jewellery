@@ -154,7 +154,7 @@ function drawInvoiceHeader(doc, form) {
   text("Old Aiport Road, Bangalore - 560 017", 246, 159);
   text(`Name: ${form.customerName || "-"}`, left, 170);
   text(`Address: ${form.customerAddress || ""}`, left, 180);
-  text("GSTN:", left, 191);
+  text("PAN:", left, 191);
   text(form.customerTax || "PAN", 329, 191);
 }
 
