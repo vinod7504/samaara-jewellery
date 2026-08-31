@@ -3,7 +3,7 @@ import { createRoot } from "react-dom/client";
 import { jsPDF } from "jspdf";
 import "./styles.css";
 
-const catalogItems = [
+const defaultCatalogItems = [
   { name: "18kt diamond pendant (own diamond)", grossWeight: 12.43, lessWeight: 4.6, wastagePercent: 10, goldRate: 11320, makingCharge: 5481, otherCharge: 1550, otherLabel: "Laser soldering and rhodium" },
   { name: "18kt round coin inbetween chain", grossWeight: 18.35, lessWeight: 13.8, wastagePercent: 11, goldRate: 11320, makingCharge: 3185 },
   { name: "18kt design ring", grossWeight: 4.19, wastagePercent: 9, goldRate: 11320, makingCharge: 2800 },
@@ -345,13 +345,19 @@ function App() {
   const [form, setForm] = useState({ invoiceNo: fallbackInvoiceNumber(today), invoiceDate: today, customerTax: "", customerAddress: "" });
   const [rates, setRates] = useState({ goldRate: 11320, gold18Rate: 11320, gold22Rate: 13835, gold24Rate: 14650, diamondRate: 58500, defaultWastage: 10 });
   const [deductions, setDeductions] = useState({ oldGoldWeight: 0, oldGoldRate: 0, oldGold24k: true });
-  const [items, setItems] = useState([{ ...blankItem({ goldRate: 11320, diamondRate: 58500, defaultWastage: 10 }), ...catalogItems[0], id: uid() }]);
-  const [catalogChoice, setCatalogChoice] = useState("0");
+  const [items, setItems] = useState([{ ...blankItem({ goldRate: 11320, diamondRate: 58500, defaultWastage: 10 }), ...defaultCatalogItems[0], id: uid() }]);
+  const [catalogItems, setCatalogItems] = useState([]);
+  const [catalogChoice, setCatalogChoice] = useState("");
   const [customerMatches, setCustomerMatches] = useState([]);
   const [showCustomerSuggestions, setShowCustomerSuggestions] = useState(false);
   const [invoiceHistory, setInvoiceHistory] = useState([]);
   const [saveStatus, setSaveStatus] = useState("");
   const [dashboardOpen, setDashboardOpen] = useState(window.location.pathname === "/dashboard");
+  const [itemDashboardOpen, setItemDashboardOpen] = useState(window.location.pathname === "/items");
+  const [newItemName, setNewItemName] = useState("");
+  const [editingCatalogId, setEditingCatalogId] = useState("");
+  const [editingCatalogName, setEditingCatalogName] = useState("");
+  const [itemDashboardStatus, setItemDashboardStatus] = useState("");
   const [dashboardFilters, setDashboardFilters] = useState({ name: "", month: "", year: "" });
   const [dashboardRows, setDashboardRows] = useState([]);
   const [dashboardStatus, setDashboardStatus] = useState("");
@@ -367,7 +373,9 @@ function App() {
   const updateItem = (id, key, value) => setItems(current => current.map(item => item.id === id ? { ...item, [key]: value } : item));
   const catalogToItem = index => {
     const source = catalogItems[index];
-    return { ...blankItem(rates), ...source, id: uid(), goldRate: rates.goldRate || source.goldRate, diamondType1: source.diamondWeight ? "Diamond / stone value" : "", diamondWeight1: source.diamondWeight || "", diamondRate1: source.diamondWeight ? rates.diamondRate || source.diamondRate : rates.diamondRate };
+    const savedDefaults = defaultCatalogItems.find(item => item.name === source.name) || {};
+    const itemTemplate = { ...savedDefaults, ...source };
+    return { ...blankItem(rates), ...itemTemplate, id: uid(), goldRate: rates.goldRate || itemTemplate.goldRate, diamondType1: itemTemplate.diamondWeight ? "Diamond / stone value" : "", diamondWeight1: itemTemplate.diamondWeight || "", diamondRate1: itemTemplate.diamondWeight ? rates.diamondRate || itemTemplate.diamondRate : rates.diamondRate };
   };
 
   useEffect(() => {
@@ -390,6 +398,20 @@ function App() {
       cancelled = true;
     };
   }, [form.invoiceDate, editingInvoiceNo]);
+
+  const loadCatalogItems = async () => {
+    try {
+      const response = await fetch(apiUrl("/api/items"));
+      const result = await response.json().catch(() => []);
+      if (!response.ok) throw new Error(result.error || "Could not load items.");
+      setCatalogItems(result);
+      setItemDashboardStatus("");
+    } catch (error) {
+      setItemDashboardStatus(error.message);
+    }
+  };
+
+  useEffect(() => { loadCatalogItems(); }, []);
 
   useEffect(() => {
     if (dashboardOpen) loadDashboardHistory();
@@ -472,13 +494,55 @@ function App() {
 
   const openDashboard = () => {
     setDashboardOpen(true);
+    setItemDashboardOpen(false);
     window.history.pushState({}, "", "/dashboard");
     setTimeout(loadDashboardHistory, 0);
   };
 
   const closeDashboard = () => {
     setDashboardOpen(false);
+    setItemDashboardOpen(false);
     window.history.pushState({}, "", "/");
+  };
+
+  const openItemDashboard = () => {
+    setDashboardOpen(false);
+    setItemDashboardOpen(true);
+    window.history.pushState({}, "", "/items");
+    loadCatalogItems();
+  };
+
+  const saveCatalogItem = async (id, name) => {
+    const cleanName = String(name || "").trim();
+    if (!cleanName) return setItemDashboardStatus("Item name is required.");
+    setItemDashboardStatus(id ? "Updating item..." : "Adding item...");
+    try {
+      const response = await fetch(apiUrl(id ? `/api/items/${id}` : "/api/items"), {
+        method: id ? "PUT" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: cleanName })
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || "Could not save item.");
+      setNewItemName("");
+      setEditingCatalogId("");
+      setEditingCatalogName("");
+      await loadCatalogItems();
+      setItemDashboardStatus(id ? "Item updated." : "Item added.");
+    } catch (error) { setItemDashboardStatus(error.message); }
+  };
+
+  const deleteCatalogItem = async item => {
+    if (!window.confirm(`Delete "${item.name}"?`)) return;
+    setItemDashboardStatus("Deleting item...");
+    try {
+      const response = await fetch(apiUrl(`/api/items/${item.id}`), { method: "DELETE" });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || "Could not delete item.");
+      await loadCatalogItems();
+      setCatalogChoice("");
+      setItemDashboardStatus("Item deleted.");
+    } catch (error) { setItemDashboardStatus(error.message); }
   };
 
   const viewInvoice = async invoiceNo => {
@@ -579,6 +643,7 @@ function App() {
       </div>
       <nav className="flex flex-col gap-3 sm:flex-row sm:items-center">
         <button className={dashboardOpen ? "btn-primary" : "btn-secondary"} type="button" onClick={openDashboard}>Customer Dashboard</button>
+        <button className={itemDashboardOpen ? "btn-primary" : "btn-secondary"} type="button" onClick={openItemDashboard}>Item Dashboard</button>
         <div className="rounded-md border border-[#e8d7b8] bg-white/70 px-4 py-3 text-sm"><div className="font-semibold">SAM Jewellers</div><div>GSTN: 29AAPPU7885C1ZT</div><div>Ph: 9886677434</div></div>
       </nav>
     </header>
@@ -697,8 +762,33 @@ function App() {
     </section>
   );
 
+  const itemDashboardPage = (
+    <section className="rounded-md border border-[#e8d7b8] bg-white/85 p-5 shadow-sm">
+      <div className="mb-6 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div><h2 className="text-lg font-semibold">Item Dashboard</h2><p className="text-sm text-muted">Manage the item names shown in the main-page dropdown.</p></div>
+        <button className="btn-secondary" type="button" onClick={closeDashboard}>Close Dashboard</button>
+      </div>
+      <div className="mb-5 flex flex-col gap-3 rounded-md border border-[#eadabe] bg-[#fffaf0] p-4 sm:flex-row">
+        <TextInput placeholder="New item name" value={newItemName} onChange={e => setNewItemName(e.target.value)} onKeyDown={e => { if (e.key === "Enter") saveCatalogItem("", newItemName); }} />
+        <button className="btn-primary shrink-0" type="button" onClick={() => saveCatalogItem("", newItemName)}>Add Item</button>
+      </div>
+      <div className="mb-4 min-h-5 text-sm text-muted">{itemDashboardStatus}</div>
+      <div className="overflow-x-auto">
+        <table className="w-full border-collapse text-sm"><thead><tr><th className="dashboard-th">Item Name</th><th className="dashboard-th w-52">Actions</th></tr></thead>
+          <tbody>{catalogItems.map(item => <tr key={item.id}>
+            <td className="dashboard-td">{editingCatalogId === item.id ? <TextInput autoFocus value={editingCatalogName} onChange={e => setEditingCatalogName(e.target.value)} onKeyDown={e => { if (e.key === "Enter") saveCatalogItem(item.id, editingCatalogName); }} /> : item.name}</td>
+            <td className="dashboard-td"><div className="flex flex-wrap gap-2">{editingCatalogId === item.id ? <><button className="btn-primary" type="button" onClick={() => saveCatalogItem(item.id, editingCatalogName)}>Save</button><button className="btn-secondary" type="button" onClick={() => setEditingCatalogId("")}>Cancel</button></> : <><button className="btn-secondary" type="button" onClick={() => { setEditingCatalogId(item.id); setEditingCatalogName(item.name); }}>Edit</button><button className="rounded-md border border-red-300 bg-white px-3 py-2 font-semibold text-red-700 hover:bg-red-50" type="button" onClick={() => deleteCatalogItem(item)}>Delete</button></>}</div></td>
+          </tr>)}</tbody></table>
+        {!catalogItems.length && <div className="border border-t-0 border-[#eadabe] p-4 text-sm text-muted">No items found. Add your first item above.</div>}
+      </div>
+    </section>
+  );
+
   if (dashboardOpen) {
     return <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">{navbar}{dashboardPage}</main>;
+  }
+  if (itemDashboardOpen) {
+    return <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">{navbar}{itemDashboardPage}</main>;
   }
 
   return (
@@ -751,7 +841,7 @@ function App() {
           <section className="rounded-md border border-[#e8d7b8] bg-white/80 p-4 shadow-sm">
             <h2 className="mb-4 text-lg font-semibold">Items</h2>
             <div className="mb-4 rounded-md border border-[#eadabe] bg-[#fffaf0] p-3">
-              <Field label="Select SAMAARA Item"><select className="field" value={catalogChoice} onChange={e => setCatalogChoice(e.target.value)}><option value="">Choose item</option><option value="other">Add other item</option>{catalogItems.map((item, index) => <option key={item.name} value={index}>{item.name}</option>)}</select></Field>
+              <Field label="Select SAMAARA Item"><select className="field" value={catalogChoice} onChange={e => setCatalogChoice(e.target.value)}><option value="">Choose item</option><option value="other">Add other item</option>{catalogItems.map((item, index) => <option key={item.id} value={index}>{item.name}</option>)}</select></Field>
               <div className="mt-3 flex flex-wrap gap-2"><button className="btn-primary" type="button" onClick={addSelectedItem}>Add Selected Item</button><button className="btn-secondary" type="button" onClick={() => setItems([])}>Clear Items</button></div>
             </div>
             <div className="space-y-4">{items.map((item, index) => <ItemCard key={item.id} item={item} index={index} total={calculateItem(item).total} rates={rates} updateItem={updateItem} removeItem={() => setItems(current => current.filter(row => row.id !== item.id))} />)}</div>

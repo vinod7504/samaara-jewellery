@@ -1,7 +1,7 @@
 const path = require("path");
 const fs = require("fs/promises");
 const express = require("express");
-const { MongoClient } = require("mongodb");
+const { MongoClient, ObjectId } = require("mongodb");
 require("dotenv").config();
 
 const app = express();
@@ -13,6 +13,18 @@ const client = mongoUri
   ? new MongoClient(mongoUri, { serverSelectionTimeoutMS: 8000 })
   : null;
 let db;
+
+const defaultCatalogItems = [
+  "18kt diamond pendant (own diamond)",
+  "18kt round coin inbetween chain",
+  "18kt design ring",
+  "18kt diamond ring",
+  "18kt plain gold ring 1",
+  "18kt plain gold ring 2",
+  "Hollow coral string",
+  "Green amethyst strand",
+  "Silver brooch"
+];
 
 function cleanPan(value) {
   return String(value || "").trim().toUpperCase();
@@ -95,6 +107,16 @@ async function connectDb() {
   await db.collection("invoices").createIndex({ invoiceNo: 1 }, { unique: true });
   await db.collection("invoices").createIndex({ panCard: 1, invoiceNo: 1 }, { unique: true });
   await db.collection("invoiceCounters").createIndex({ invoiceDate: 1 }, { unique: true });
+  await db.collection("catalogItems").createIndex({ normalizedName: 1 }, { unique: true });
+  if (await db.collection("catalogItems").countDocuments() === 0) {
+    const now = new Date();
+    await db.collection("catalogItems").insertMany(defaultCatalogItems.map(name => ({
+      name,
+      normalizedName: name.toLocaleLowerCase(),
+      createdAt: now,
+      updatedAt: now
+    })));
+  }
   return db;
 }
 
@@ -129,6 +151,60 @@ app.get("/api/health", async (req, res) => {
     res.json({ ok: true });
   } catch (error) {
     res.status(503).json({ ok: false, error: error.message });
+  }
+});
+
+app.get("/api/items", async (req, res) => {
+  try {
+    const database = await connectDb();
+    const items = await database.collection("catalogItems").find({}).sort({ name: 1 }).toArray();
+    res.json(items.map(item => ({ id: item._id.toString(), name: item.name })));
+  } catch (error) {
+    res.status(503).json({ error: error.message });
+  }
+});
+
+app.post("/api/items", async (req, res) => {
+  const name = String(req.body?.name || "").trim();
+  if (!name) return res.status(400).json({ error: "Item name is required" });
+  try {
+    const database = await connectDb();
+    const now = new Date();
+    const result = await database.collection("catalogItems").insertOne({ name, normalizedName: name.toLocaleLowerCase(), createdAt: now, updatedAt: now });
+    res.status(201).json({ id: result.insertedId.toString(), name });
+  } catch (error) {
+    if (error.code === 11000) return res.status(409).json({ error: "An item with this name already exists" });
+    res.status(500).json({ error: error.message || "Failed to add item" });
+  }
+});
+
+app.put("/api/items/:id", async (req, res) => {
+  const name = String(req.body?.name || "").trim();
+  if (!name) return res.status(400).json({ error: "Item name is required" });
+  if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: "Invalid item ID" });
+  try {
+    const database = await connectDb();
+    const result = await database.collection("catalogItems").updateOne(
+      { _id: new ObjectId(req.params.id) },
+      { $set: { name, normalizedName: name.toLocaleLowerCase(), updatedAt: new Date() } }
+    );
+    if (!result.matchedCount) return res.status(404).json({ error: "Item not found" });
+    res.json({ id: req.params.id, name });
+  } catch (error) {
+    if (error.code === 11000) return res.status(409).json({ error: "An item with this name already exists" });
+    res.status(500).json({ error: error.message || "Failed to update item" });
+  }
+});
+
+app.delete("/api/items/:id", async (req, res) => {
+  if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: "Invalid item ID" });
+  try {
+    const database = await connectDb();
+    const result = await database.collection("catalogItems").deleteOne({ _id: new ObjectId(req.params.id) });
+    if (!result.deletedCount) return res.status(404).json({ error: "Item not found" });
+    res.json({ ok: true, id: req.params.id });
+  } catch (error) {
+    res.status(500).json({ error: error.message || "Failed to delete item" });
   }
 });
 
